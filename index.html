@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AeroTwin Drone Simulator</title>
+  <meta name="description" content="A browser drone simulator you can fly with the keyboard, a gamepad or block-based missions.">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/pages.css">
+  <link rel="stylesheet" href="assets/css/landing.css">
+  <script src="assets/vendor/three.min.js"></script>
+</head>
+<body class="page landing">
+  <div id="top"></div>
+
+  <section class="hero">
+    <canvas id="heroScene" aria-hidden="true"></canvas>
+    <div class="hero-copy">
+      <h1>Fly a drone three ways, right in the browser.</h1>
+      <p>AeroTwin is a quadcopter simulator with real flight physics. Fly it with your keyboard, plug in a gamepad, or snap blocks together into an autonomous mission. Every flight lands in your logbook, ready to replay in 3D.</p>
+      <div class="actions">
+        <a class="btn primary big" href="sim.html">Launch simulator</a>
+        <a class="btn big" href="sim.html#mode=mission">Build a mission</a>
+      </div>
+    </div>
+    <div class="hero-readout" aria-hidden="true">
+      <div><span id="roAlt">12.4</span><small>Altitude m</small></div>
+      <div><span id="roHdg">045</span><small>Heading</small></div>
+      <div><span id="roBat">87</span><small>Battery %</small></div>
+    </div>
+  </section>
+
+  <main class="page-main">
+    <section class="ways" aria-labelledby="ways-h">
+      <h2 id="ways-h">Pick your controls</h2>
+      <div class="ways-grid">
+        <article class="way">
+          <div class="way-art keys" aria-hidden="true">
+            <div class="kgrp"><kbd>W</kbd><div><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div></div>
+            <div class="kgrp"><kbd>↑</kbd><div><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></div></div>
+          </div>
+          <h3>Keyboard</h3>
+          <p>The two hands mirror the two sticks of a real transmitter: W A S D for throttle and yaw, the arrow keys for pitch and roll. Keys ease in, so a short tap gives a gentle nudge.</p>
+        </article>
+        <article class="way">
+          <div class="way-art pad" aria-hidden="true">
+            <svg viewBox="0 0 200 110"><path d="M40 20h120c22 0 36 22 36 50 0 22-12 36-26 36-12 0-18-10-28-22H58c-10 12-16 22-28 22C16 106 4 92 4 70c0-28 14-50 36-50Z" fill="#1d3650" stroke="#2a4661" stroke-width="2"/><circle cx="62" cy="62" r="17" fill="#13253a" stroke="#ff7a1a" stroke-width="2"/><circle cx="66" cy="58" r="7" fill="#ff7a1a"/><circle cx="138" cy="62" r="17" fill="#13253a" stroke="#ff7a1a" stroke-width="2"/><circle cx="134" cy="67" r="7" fill="#ff7a1a"/><circle cx="160" cy="36" r="5" fill="#3fc6b4"/><circle cx="172" cy="46" r="5" fill="#ff6461"/><circle cx="148" cy="46" r="5" fill="#6aa7ff"/><circle cx="160" cy="56" r="5" fill="#f2c14e"/></svg>
+          </div>
+          <h3>Gamepad</h3>
+          <p>Any Xbox, PlayStation or generic controller works the moment you press a button. Mode 2 by default, Mode 1 on request, with adjustable dead zone and expo for precise hovering.</p>
+        </article>
+        <article class="way">
+          <div class="way-art blocks" aria-hidden="true">
+            <span class="blk hat">when mission starts</span>
+            <span class="blk">take off</span>
+            <span class="blk loop">repeat 4 times</span>
+            <span class="blk in">fly forward 30 m</span>
+            <span class="blk in cam">take a photo</span>
+            <span class="blk in">turn by 90 °</span>
+            <span class="blk">return to home</span>
+          </div>
+          <h3>Block missions</h3>
+          <p>Write autonomous flights with Blockly: loops, variables, functions and sensors, plus orbit, curve and go-to moves. Grab the sticks during a mission and you are back in control.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="world" aria-labelledby="world-h">
+      <div class="world-copy">
+        <h2 id="world-h">A small district to explore</h2>
+        <ul class="facts">
+          <li><b>Vertiport</b> with a lit landing pad, your take-off and return-to-home point.</li>
+          <li><b>Ring course</b> of eight floating gates over the lake, timed per lap.</li>
+          <li><b>Radio tower</b> for point-of-interest orbits with the camera locked on.</li>
+          <li><b>City blocks</b> with a rooftop pad for precision landings.</li>
+          <li><b>Day, dusk and night</b>, wind gusts, sport mode and a draining battery.</li>
+        </ul>
+      </div>
+      <div class="world-copy">
+        <h2>Every flight is kept</h2>
+        <ul class="facts">
+          <li>Telemetry recorded ten times a second from take-off to landing.</li>
+          <li>Ghost replays of any past flight, with scrubbing and speed control.</li>
+          <li>Photos and video from the stabilised gimbal camera.</li>
+          <li>Missions saved with their earlier versions, and Drone Commander programs import as they are.</li>
+        </ul>
+        <a class="btn" href="logbook.html">Open the logbook</a>
+      </div>
+    </section>
+
+    <section class="controls" id="controls" aria-labelledby="controls-h">
+      <h2 id="controls-h">Controls</h2>
+      <div class="ctrl-grid">
+        <table class="t">
+          <thead><tr><th>Action</th><th>Keyboard</th><th>Gamepad</th></tr></thead>
+          <tbody>
+            <tr><td>Climb and descend</td><td><kbd>W</kbd> <kbd>S</kbd></td><td>Left stick up and down</td></tr>
+            <tr><td>Turn left and right</td><td><kbd>A</kbd> <kbd>D</kbd></td><td>Left stick sideways</td></tr>
+            <tr><td>Fly forward and back</td><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Right stick up and down</td></tr>
+            <tr><td>Slide left and right</td><td><kbd>←</kbd> <kbd>→</kbd></td><td>Right stick sideways</td></tr>
+            <tr><td>Take off or land</td><td><kbd>Space</kbd></td><td>A / ✕</td></tr>
+            <tr><td>Return to home</td><td><kbd>H</kbd></td><td>B / ◯</td></tr>
+            <tr><td>Change camera</td><td><kbd>C</kbd></td><td>X / ▢</td></tr>
+            <tr><td>Take a photo</td><td><kbd>P</kbd></td><td>Y / △</td></tr>
+            <tr><td>Start or stop video</td><td><kbd>R</kbd></td><td>RB / R1</td></tr>
+            <tr><td>Smoke trail</td><td><kbd>M</kbd></td><td>LB / L1</td></tr>
+            <tr><td>Sport mode</td><td><kbd>G</kbd></td><td>View / Share</td></tr>
+            <tr><td>Time of day</td><td><kbd>N</kbd></td><td>—</td></tr>
+            <tr><td>Stop autopilot, reset to pad</td><td><kbd>Esc</kbd> <kbd>Backspace</kbd></td><td>Menu / Options resets</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-foot">
+    <div class="page-main foot-inner">
+      <p>AeroTwin by Mudit. Built on ideas and code from <a href="https://github.com/vroby65/DroneCommander" target="_blank" rel="noopener">Drone Commander</a> by vroby65 and <a href="https://github.com/MSubham06/Drone_Simulator" target="_blank" rel="noopener">Drone Simulator</a> by Subham (both MIT), with three.js and Google Blockly.</p>
+    </div>
+  </footer>
+  <script type="module" src="assets/js/landing.js"></script>
+</body>
+</html>

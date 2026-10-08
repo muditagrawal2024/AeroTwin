@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AeroTwin Flight Simulator</title>
+  <meta name="description" content="Fly a quadcopter with the keyboard, a gamepad or block-based missions. Flights, photos and missions are saved to your logbook.">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/pages.css">
+  <link rel="stylesheet" href="assets/css/sim.css">
+  <script src="assets/vendor/three.min.js"></script>
+  <script src="assets/vendor/blockly/blockly_compressed.min.js"></script>
+  <script src="assets/vendor/blockly/blocks_compressed.min.js"></script>
+  <script src="assets/vendor/blockly/en.js"></script>
+  <script src="assets/vendor/blockly/javascript_compressed.min.js"></script>
+</head>
+<body class="sim">
+  <div id="top"></div>
+  <div class="sim-shell" id="shell">
+    <!-- Mission editor -->
+    <aside class="mission" id="missionPanel" aria-label="Mission editor">
+      <div class="m-head">
+        <div class="m-title">
+          <h2>Mission</h2>
+          <span class="hint" id="missionName">untitled.xml</span>
+        </div>
+        <div class="m-run">
+          <button class="btn primary" id="runMission" type="button">Run mission</button>
+          <button class="btn danger" id="stopMission" type="button" disabled>Stop</button>
+        </div>
+      </div>
+      <div class="m-tools">
+        <select id="missionList" aria-label="Saved missions"><option value="">Open a saved mission…</option></select>
+        <button class="btn small" id="saveMission" type="button" title="Save to your missions. Earlier versions are kept.">Save</button>
+        <button class="btn small ghost" id="newMission" type="button">New</button>
+        <button class="btn small ghost" id="importMission" type="button" title="Import an XML file, including Drone Commander programs">Import</button>
+        <button class="btn small ghost" id="exportMission" type="button">Export</button>
+        <input type="file" id="importFile" accept=".xml,text/xml" hidden>
+      </div>
+      <div id="blockly" class="blockly-host"></div>
+      <div class="m-console">
+        <div class="m-log" id="missionLog" aria-live="polite"></div>
+        <div class="m-vars" id="missionVars"><span class="hint">Variables appear here while a mission runs.</span></div>
+      </div>
+    </aside>
+
+    <!-- 3D stage -->
+    <section class="stage" id="stage" tabindex="0" aria-label="3D flight view. Click to fly with the keyboard.">
+      <canvas id="view"></canvas>
+
+      <div class="hud hud-tl">
+        <div class="seg" role="tablist" aria-label="Control mode">
+          <button type="button" id="modePilot" class="on" role="tab" aria-selected="true">Pilot</button>
+          <button type="button" id="modeMission" role="tab" aria-selected="false">Mission</button>
+        </div>
+        <div class="srcs">
+          <span class="src" id="srcKb"><span class="dot on"></span>Keyboard</span>
+          <span class="src" id="srcGp" title="Press any button on a controller to connect it"><span class="dot"></span><span id="gpName">No gamepad</span></span>
+        </div>
+        <div class="state" id="flightState">On the pad</div>
+      </div>
+
+      <div class="hud hud-tr">
+        <div class="tool-row">
+          <button class="tool" id="camBtn" type="button" title="Camera view (C)">Chase</button>
+          <button class="tool" id="todBtn" type="button" title="Time of day (N)">Day</button>
+          <button class="tool" id="sndBtn" type="button" title="Motor sound">Sound on</button>
+          <button class="tool" id="helpBtn" type="button" title="Controls (?)">Controls</button>
+          <button class="tool accent" id="dataBtn" type="button" title="Replays, saved items and settings">Flight data</button>
+        </div>
+        <canvas id="minimap" width="168" height="168" aria-label="Mini map"></canvas>
+        <div class="rings" id="ringInfo">Ring course 0/8</div>
+      </div>
+
+      <div class="pip" id="pip"><span class="pip-label">Gimbal camera</span><span class="rec" id="recDot" hidden>REC</span></div>
+
+      <div class="hud instruments" id="instruments">
+        <div class="inst"><span class="iv" id="iAlt">0.0</span><span class="il">Altitude m</span></div>
+        <div class="inst"><span class="iv" id="iVs">0.0</span><span class="il">Vertical m/s</span></div>
+        <div class="inst"><span class="iv" id="iSpd">0.0</span><span class="il">Speed m/s</span></div>
+        <div class="inst compass"><canvas id="compass" width="220" height="40"></canvas><span class="il" id="iHdg">Heading 000°</span></div>
+        <div class="inst"><span class="iv" id="iBat">100</span><span class="il">Battery %</span><i class="batt"><b id="iBatBar"></b></i></div>
+        <div class="inst"><span class="iv" id="iTime">00:00</span><span class="il">Flight time</span></div>
+        <div class="inst"><span class="iv" id="iHome">0</span><span class="il">To home m</span></div>
+      </div>
+
+      <div class="hud sticks" aria-hidden="true">
+        <div class="stick"><i id="stickL"></i><span>Throttle · Yaw</span></div>
+        <div class="stick"><i id="stickR"></i><span>Pitch · Roll</span></div>
+        <canvas id="graph" width="220" height="64"></canvas>
+      </div>
+
+      <div class="touch" id="touch" hidden>
+        <div class="tstick" id="tsL" aria-label="Left stick: throttle and yaw"><i></i></div>
+        <div class="tbtns">
+          <button type="button" class="tool accent" id="tTake">Take off</button>
+          <button type="button" class="tool" id="tHome">Home</button>
+          <button type="button" class="tool" id="tPhoto">Photo</button>
+        </div>
+        <div class="tstick" id="tsR" aria-label="Right stick: pitch and roll"><i></i></div>
+      </div>
+      <div class="feed" id="feed" aria-live="polite"></div>
+      <div class="banner" id="banner" hidden></div>
+
+      <div class="help" id="help" hidden>
+        <div class="help-card" role="dialog" aria-label="Flight controls">
+          <header><h2>Flight controls</h2><button class="btn ghost small" id="helpClose" type="button">Close</button></header>
+          <div class="help-grid">
+            <section>
+              <h3>Keyboard (Mode 2)</h3>
+              <dl>
+                <dt><kbd>W</kbd> <kbd>S</kbd></dt><dd>Throttle: climb and descend</dd>
+                <dt><kbd>A</kbd> <kbd>D</kbd></dt><dd>Yaw: turn left and right</dd>
+                <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Pitch: fly forward and back</dd>
+                <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Roll: slide left and right</dd>
+                <dt><kbd>Space</kbd></dt><dd>Take off, or land when flying</dd>
+                <dt><kbd>H</kbd></dt><dd>Return to home and land</dd>
+                <dt><kbd>P</kbd> <kbd>R</kbd></dt><dd>Take a photo, start or stop video</dd>
+                <dt><kbd>C</kbd> <kbd>N</kbd> <kbd>M</kbd></dt><dd>Camera view, time of day, smoke</dd>
+                <dt><kbd>G</kbd></dt><dd>Sport mode (faster, steeper tilt)</dd>
+                <dt><kbd>Esc</kbd> <kbd>Backspace</kbd></dt><dd>Stop automation, reset to the pad</dd>
+              </dl>
+            </section>
+            <section>
+              <h3>Gamepad</h3>
+              <dl>
+                <dt>Left stick</dt><dd>Throttle and yaw</dd>
+                <dt>Right stick</dt><dd>Pitch and roll</dd>
+                <dt>A / ✕</dt><dd>Take off or land</dd>
+                <dt>B / ◯</dt><dd>Return to home</dd>
+                <dt>X / ▢</dt><dd>Camera view</dd>
+                <dt>Y / △</dt><dd>Take a photo</dd>
+                <dt>LB · RB</dt><dd>Smoke, video recording</dd>
+                <dt>View · Menu</dt><dd>Sport mode, reset</dd>
+              </dl>
+              <h3 style="margin-top:14px">Missions</h3>
+              <p class="hint">Switch to Mission, snap blocks under “when mission starts” and press Run. Moving any stick during a mission hands control back to you.</p>
+            </section>
+          </div>
+          <footer><span class="hint">Fly through the orange rings east of the pad, then land to save the flight to your logbook.</span><button class="btn primary" id="helpGo" type="button">Start flying</button></footer>
+        </div>
+      </div>
+    </section>
+
+    <!-- Flight data drawer -->
+    <aside class="drawer" id="drawer" aria-label="Flight data" hidden>
+      <header><h2>Flight data</h2><button class="btn ghost small" id="drawerClose" type="button">Close</button></header>
+      <div class="tabs" role="tablist">
+        <button type="button" data-tab="replay" class="on">Replay</button>
+        <button type="button" data-tab="saved">Saved</button>
+        <button type="button" data-tab="settings">Settings</button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+  </div>
+  <script type="module" src="assets/js/sim/main.js"></script>
+</body>
+</html>
