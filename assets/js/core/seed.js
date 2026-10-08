@@ -164,18 +164,15 @@ const droneSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" 
 <rect x="100" y="66" width="40" height="28" rx="8" fill="#e8eef4"/><circle cx="120" cy="80" r="6" fill="#14273a"/>
 </svg>`;
 
-export async function seed(s3) {
-  // Idempotent: if an earlier page load was interrupted part-way through
-  // seeding, only the missing buckets (and their sample objects) are created.
-  const now = s3.now();
+// Creates any of the four AeroTwin buckets that are missing. Safe to call on
+// every page load: existing buckets (and anything the user changed) are untouched.
+export async function ensureBuckets(s3) {
   const fresh = {};
-  const has = async (b, k) => !!(await s3._findVersion(b, k));
   const ensure = async (name, opts) => { fresh[name] = !(await s3.headBucket(name)); if (fresh[name]) await s3.createBucket(name, opts); };
   const logs = 'aerotwin-flight-logs';
   const media = 'aerotwin-drone-media';
   const missions = 'aerotwin-missions';
   const gallery = 'aerotwin-public-gallery';
-
   await ensure(logs, {
     versioning: 'Enabled',
     tags: { project: 'AeroTwin', data: 'telemetry' },
@@ -196,6 +193,18 @@ export async function seed(s3) {
   await ensure(missions, { versioning: 'Enabled', tags: { project: 'AeroTwin', data: 'missions' } });
   await ensure(gallery, { blockPublicAccess: false, tags: { project: 'AeroTwin', access: 'public' } });
   if (fresh[gallery]) await s3.putBucketPolicy(gallery, publicReadPolicy(gallery, 'shared/'));
+  return fresh;
+}
+
+export async function seed(s3) {
+  // Idempotent: if an earlier page load was interrupted part-way through
+  // seeding, only the missing buckets (and their sample objects) are created.
+  const now = s3.now();
+  const has = async (b, k) => !!(await s3._findVersion(b, k));
+  const logs = 'aerotwin-flight-logs';
+  const missions = 'aerotwin-missions';
+  const gallery = 'aerotwin-public-gallery';
+  await ensureBuckets(s3);
 
   for (const [k, xml] of Object.entries(SAMPLE_MISSIONS)) {
     if (await has(missions, k)) continue;

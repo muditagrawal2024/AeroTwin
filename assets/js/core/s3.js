@@ -15,6 +15,7 @@
 // Every call is recorded in a CloudTrail-style activity log.
 
 import { md5 } from './md5.js';
+import { sha256, hmacSha256 } from './sha256.js';
 import { evaluatePolicy, validatePolicy } from './policy.js';
 import { STORAGE_CLASSES, PUT_CLASS, FREE_REQUESTS, MONTH_MS } from './pricing.js';
 import { randId, guessContentType } from './util.js';
@@ -64,11 +65,15 @@ function openDB() {
 
 const enc = new TextEncoder();
 const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+// WebCrypto only exists on secure (https://) pages; fall back to pure JS on http://.
+const subtle = globalThis.crypto?.subtle;
 async function hmac(key, msg) {
-  const k = await crypto.subtle.importKey('raw', typeof key === 'string' ? enc.encode(key) : key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return crypto.subtle.sign('HMAC', k, enc.encode(msg));
+  const kb = typeof key === 'string' ? enc.encode(key) : new Uint8Array(key);
+  if (!subtle) return hmacSha256(kb, enc.encode(msg)).buffer;
+  const k = await subtle.importKey('raw', kb, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return subtle.sign('HMAC', k, enc.encode(msg));
 }
-async function sha256hex(msg) { return hex(await crypto.subtle.digest('SHA-256', enc.encode(msg))); }
+async function sha256hex(msg) { return hex(subtle ? await subtle.digest('SHA-256', enc.encode(msg)) : sha256(enc.encode(msg))); }
 const amzDate = ms => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 const uriEncode = (s, keepSlash) => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase()).replace(keepSlash ? /%2F/g : /$^/, '/');
 const monthKey = ms => new Date(ms).toISOString().slice(0, 7);
@@ -120,12 +125,13 @@ class S3Engine {
     }
     this.meta.account = account;
     this.meta.clockOffset = (await this._get('meta', 'clockOffset')) || 0;
-    this.sseKey = await crypto.subtle.importKey('raw', new Uint8Array(account.sseKey), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    // SSE-S3: real AES-256-GCM where WebCrypto is available (https://).
+    this.sseKey = subtle ? await subtle.importKey('raw', new Uint8Array(account.sseKey), 'AES-GCM', false, ['encrypt', 'decrypt']) : null;
     if (!(await this._get('meta', 'seeded'))) {
       const { seed } = await import('./seed.js');
       const prev = this.source; this.source = 'aerotwin-setup';
       try { await seed(this); await this._put('meta', true, 'seeded'); }
-      catch (e) { console.warn('Sample data could not be created', e); }
+      catch (e) { console.error('Sample data could not be created', e); }
       finally { this.source = prev; }
     }
     await this.runLifecycle();
@@ -367,9 +373,9 @@ class S3Engine {
     const etag = md5(bytes);
     let stored = bytes.buffer.byteLength === bytes.byteLength ? bytes.buffer : bytes.slice().buffer;
     let iv = null;
-    if (b.encryption === 'AES256') {
+    if (b.encryption === 'AES256' && this.sseKey) {
       iv = crypto.getRandomValues(new Uint8Array(12));
-      stored = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.sseKey, bytes);
+      stored = await subtle.encrypt({ name: 'AES-GCM', iv }, this.sseKey, bytes);
     }
     const versioned = b.versioning === 'Enabled';
     const versionId = versioned ? randId(32, 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._') : 'null';
@@ -460,7 +466,10 @@ class S3Engine {
     }
     const blob = await this._get('blobs', o.blobId);
     let data = blob.data;
-    if (blob.iv) data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.iv }, this.sseKey, data);
+    if (blob.iv) {
+      if (!this.sseKey) return this._fail('GetObject', new S3Error('KMS.DisabledException', 'This object was encrypted on an https:// page and can only be decrypted there.', 400), ctx);
+      data = await subtle.decrypt({ name: 'AES-GCM', iv: blob.iv }, this.sseKey, data);
+    }
     const retrievalFee = STORAGE_CLASSES[o.storageClass].retrieval;
     await this._log({ api: 'GetObject', ...ctx, bytes: o.size });
     if (retrievalFee) await this._integrateUsage({ retrieval: { cls: o.storageClass, bytes: o.size } });

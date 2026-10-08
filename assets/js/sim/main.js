@@ -1,6 +1,7 @@
 // AeroTwin flight simulator: ties together the world, flight model,
 // keyboard/gamepad input, Blockly missions, HUD and the S3 data path.
 import { s3 } from '../core/s3.js';
+import { ensureBuckets } from '../core/seed.js';
 import { h, fmtBytes, download } from '../core/util.js';
 import { topbar, toast } from '../core/ui.js';
 import { buildWorld, toWorld } from './world.js';
@@ -897,7 +898,13 @@ function onCrash() {
 }
 
 // ---------------- boot ----------------
-s3.ready().then(() => {
+s3.ready().then(async () => {
+  // Make sure the drone's buckets exist, even if sample data failed earlier
+  // or someone deleted a bucket in the console.
+  const prevSource = s3.source; s3.source = 'aerotwin-setup';
+  try { await ensureBuckets(s3); }
+  catch (e) { console.error(e); toast('Could not create the drone buckets', `${e.code || e.name}: ${e.message}`, 'error', 15000); }
+  finally { s3.source = prevSource; }
   resize();
   setTod('Day');
   resetRings();
