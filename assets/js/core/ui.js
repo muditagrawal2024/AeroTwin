@@ -1,5 +1,7 @@
-// Shared UI helpers: brand mark, top bar, toasts, modals and confirmations.
-import { h } from './util.js';
+// Shared UI helpers: brand mark, top bar with simulated clock and live
+// cost meter, toasts, modals and confirmations.
+import { h, fmtUSD, fmtDate } from './util.js';
+import { s3 } from './s3.js';
 
 export const brandMark = () => {
   const wrap = document.createElement('span');
@@ -92,14 +94,67 @@ export function confirmDialog({ title, message, confirmLabel = 'Confirm', danger
 
 // ---------- top bar ----------
 export function topbar({ active } = {}) {
+  const clockLabel = h('b', {}, '—');
+  const offsetLabel = h('span', {}, '');
+  const meter = h('span', { class: 'meter' }, '$0.00');
   const link = (href, id, label) => h('a', { href, class: active === id ? 'on' : '', 'aria-current': active === id ? 'page' : null }, label);
-  return h('header', { class: 'topbar' },
+  const bar = h('header', { class: 'topbar' },
     h('a', { class: 'brand', href: 'index.html', 'aria-label': 'AeroTwin home' }, brandMark(), h('span', { class: 'brand-word' }, 'AeroTwin')),
     h('nav', { class: 'top-links', 'aria-label': 'Primary' },
-      link('sim.html', 'sim', 'Fly'),
-      link('logbook.html', 'logbook', 'Logbook'),
-      link('index.html#controls', 'controls', 'Controls')),
+      link('app.html#/', 'console', 'S3 console'),
+      link('sim.html', 'sim', 'Drone simulator')),
     h('span', { class: 'spacer' }),
-    active !== 'sim' ? h('a', { class: 'btn primary small', href: 'sim.html' }, 'Launch simulator') : null
+    h('span', { class: 'chip hide-s', title: 'Simulated region' }, h('span', { class: 'dot on' }), h('b', {}, 'ap-south-1')),
+    h('button', { class: 'chip', type: 'button', title: 'Simulated clock. Click to time-travel and run lifecycle rules.', onclick: () => openClock() }, icon('clock'), h('span', { class: 'hide-s' }, clockLabel), offsetLabel),
+    h('a', { class: 'chip', href: 'app.html#/billing', title: 'Month-to-date S3 charges for this simulated account' }, h('span', { class: 'hide-s' }, 'Month to date'), meter)
   );
+
+  const refreshClock = () => {
+    clockLabel.textContent = fmtDate(s3.now());
+    const days = (s3.meta.clockOffset || 0) / 86400000;
+    offsetLabel.textContent = days >= 0.01 ? `+${days < 10 ? days.toFixed(1) : Math.round(days)} d` : '';
+    offsetLabel.className = days >= 0.01 ? 'meter warn' : '';
+  };
+  const refreshCost = async () => {
+    try {
+      const b = await s3.billing();
+      const budget = b.settings.monthlyBudget || 1;
+      meter.textContent = fmtUSD(b.total, b.total < 1 ? 6 : 2);
+      meter.className = 'meter' + (b.total > budget ? ' over' : b.forecast > budget ? ' warn' : '');
+    } catch { /* engine not ready yet */ }
+  };
+  let costTimer;
+  const scheduleCost = () => { clearTimeout(costTimer); costTimer = setTimeout(refreshCost, 400); };
+  s3.ready().then(() => { refreshClock(); refreshCost(); });
+  setInterval(refreshClock, 1000);
+  setInterval(refreshCost, 5000);
+  s3.on(e => { if (['clock', 'request', 'billing', 'lifecycle'].includes(e.type)) { refreshClock(); scheduleCost(); } });
+  return bar;
+}
+
+export function openClock() {
+  const status = h('p', { class: 'hint' }, '');
+  const now = h('div', { class: 'clock-now mono' }, fmtDate(s3.now()));
+  const jump = days => async () => {
+    const changes = await s3.advanceClock(days * 86400000);
+    now.textContent = fmtDate(s3.now());
+    const moved = changes.filter(c => c.action === 'transition').length;
+    const expired = changes.filter(c => c.action !== 'transition').length;
+    status.textContent = `Clock moved ${days} day${days === 1 ? '' : 's'} forward. Lifecycle rules ran: ${moved} transition${moved === 1 ? '' : 's'}, ${expired} expiration${expired === 1 ? '' : 's'}.`;
+    if (changes.length) toast('Lifecycle rules applied', `${moved} transitions, ${expired} expirations`);
+    return false;
+  };
+  modal({
+    title: 'Simulated clock',
+    body: h('div', { class: 'stack' },
+      h('p', {}, 'Lifecycle rules, Glacier restores, presigned URL expiry and storage charges all follow this clock. Move it forward to watch objects age without waiting weeks.'),
+      now, status),
+    actions: [
+      { label: 'Reset to real time', onClick: async () => { await s3.resetClock(); now.textContent = fmtDate(s3.now()); status.textContent = 'Clock reset. Objects keep their storage class.'; return false; } },
+      { label: '+1 hour', onClick: async () => { await s3.advanceClock(3600000); now.textContent = fmtDate(s3.now()); status.textContent = 'Clock moved 1 hour forward.'; return false; } },
+      { label: '+1 day', onClick: jump(1) },
+      { label: '+30 days', onClick: jump(30) },
+      { label: '+90 days', kind: 'primary', onClick: jump(90) }
+    ]
+  });
 }

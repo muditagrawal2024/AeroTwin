@@ -1,6 +1,10 @@
-// Flight data recorder: samples telemetry at 10 Hz while airborne and saves
-// each flight as a JSON log in the logbook.
-import { store } from '../core/store.js';
+// Flight data recorder: samples telemetry at 10 Hz while airborne and turns
+// each flight into a JSON object in S3. Also uploads gimbal-camera stills,
+// video and mission notes to the media bucket.
+import { s3 } from '../core/s3.js';
+
+export const LOG_BUCKET = 'aerotwin-flight-logs';
+export const MEDIA_BUCKET = 'aerotwin-drone-media';
 
 const HZ = 10;
 
@@ -13,7 +17,7 @@ export class Recorder {
   constructor() { this.active = null; this.acc = 0; }
 
   start(callsign) {
-    const now = Date.now();
+    const now = s3.now();
     this.active = {
       flightId: `FLT-${stamp(now).compact}`,
       callsign, startedAtMs: now, t: 0,
@@ -72,12 +76,37 @@ export class Recorder {
     };
   }
 
-  /** Save the log to the logbook and end the flight. */
-  async save({ crashed = false, reason } = {}) {
+  /** PUT the log to S3. final=true ends the flight; false uploads a checkpoint. */
+  async upload({ final = true, crashed = false, reason } = {}) {
     if (!this.active) return null;
-    if (!this.active.samples.length) { this.active = null; return null; }
-    const log = this.build(true, { crashed, reason });
-    this.active = null;
-    return store.addFlight(log);
+    if (!this.active.samples.length) { if (final) this.active = null; return null; }
+    const log = this.build(final, { crashed, reason });
+    const st = stamp(this.active.startedAtMs);
+    const key = `logs/${st.y}/${st.m}/${st.d}/${log.flightId}${final ? '' : '-partial'}.json`;
+    if (final) this.active = null;
+    const prev = s3.source; s3.source = 'drone-sim';
+    try {
+      const r = await s3.putObject(LOG_BUCKET, key, JSON.stringify(log), {
+        contentType: 'application/json',
+        metadata: { 'x-amz-meta-callsign': log.callsign, 'x-amz-meta-control': log.control.join(',') || 'autopilot', 'x-amz-meta-crashed': String(crashed) }
+      });
+      return { ...r, key, log };
+    } finally { s3.source = prev; }
   }
+}
+
+export async function uploadMedia(kind, blob, ext, meta = {}) {
+  const st = stamp(s3.now());
+  const key = `${kind}/${st.y}/${st.m}/${st.d}/${kind === 'photos' ? 'IMG' : 'VID'}-${st.compact}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}.${ext}`;
+  const prev = s3.source; s3.source = 'drone-sim';
+  try {
+    const r = await s3.putObject(MEDIA_BUCKET, key, blob, { contentType: blob.type, metadata: meta });
+    return { ...r, key };
+  } finally { s3.source = prev; }
+}
+
+export async function putNote(key, text, meta) {
+  const prev = s3.source; s3.source = 'drone-sim';
+  try { return await s3.putObject(MEDIA_BUCKET, key, text, { contentType: 'text/plain', metadata: meta }); }
+  finally { s3.source = prev; }
 }

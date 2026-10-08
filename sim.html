@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AeroTwin Flight Simulator</title>
-  <meta name="description" content="Fly a quadcopter with the keyboard, a gamepad or block-based missions. Flights, photos and missions are saved to your logbook.">
+  <meta name="description" content="Fly a quadcopter with the keyboard, a gamepad or block-based missions. Every flight is stored in the simulated Amazon S3 account.">
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -34,8 +34,8 @@
         </div>
       </div>
       <div class="m-tools">
-        <select id="missionList" aria-label="Saved missions"><option value="">Open a saved mission…</option></select>
-        <button class="btn small" id="saveMission" type="button" title="Save to your missions. Earlier versions are kept.">Save</button>
+        <select id="missionList" aria-label="Missions stored in S3"><option value="">Open from s3://aerotwin-missions…</option></select>
+        <button class="btn small" id="saveMission" type="button" title="PUT this mission to s3://aerotwin-missions (versioned, earlier saves are kept)">Save to S3</button>
         <button class="btn small ghost" id="newMission" type="button">New</button>
         <button class="btn small ghost" id="importMission" type="button" title="Import an XML file, including Drone Commander programs">Import</button>
         <button class="btn small ghost" id="exportMission" type="button">Export</button>
@@ -70,7 +70,7 @@
           <button class="tool" id="todBtn" type="button" title="Time of day (N)">Day</button>
           <button class="tool" id="sndBtn" type="button" title="Motor sound">Sound on</button>
           <button class="tool" id="helpBtn" type="button" title="Controls (?)">Controls</button>
-          <button class="tool accent" id="dataBtn" type="button" title="Replays, saved items and settings">Flight data</button>
+          <button class="tool accent" id="dataBtn" type="button" title="Replays from S3, uploads and settings">Flight data</button>
         </div>
         <canvas id="minimap" width="168" height="168" aria-label="Mini map"></canvas>
         <div class="rings" id="ringInfo">Ring course 0/8</div>
@@ -119,7 +119,7 @@
                 <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Roll: slide left and right</dd>
                 <dt><kbd>Space</kbd></dt><dd>Take off, or land when flying</dd>
                 <dt><kbd>H</kbd></dt><dd>Return to home and land</dd>
-                <dt><kbd>P</kbd> <kbd>R</kbd></dt><dd>Take a photo, start or stop video</dd>
+                <dt><kbd>P</kbd> <kbd>R</kbd></dt><dd>Photo to S3, start or stop video</dd>
                 <dt><kbd>C</kbd> <kbd>N</kbd> <kbd>M</kbd></dt><dd>Camera view, time of day, smoke</dd>
                 <dt><kbd>G</kbd></dt><dd>Sport mode (faster, steeper tilt)</dd>
                 <dt><kbd>Esc</kbd> <kbd>Backspace</kbd></dt><dd>Stop automation, reset to the pad</dd>
@@ -133,7 +133,7 @@
                 <dt>A / ✕</dt><dd>Take off or land</dd>
                 <dt>B / ◯</dt><dd>Return to home</dd>
                 <dt>X / ▢</dt><dd>Camera view</dd>
-                <dt>Y / △</dt><dd>Take a photo</dd>
+                <dt>Y / △</dt><dd>Photo to S3</dd>
                 <dt>LB · RB</dt><dd>Smoke, video recording</dd>
                 <dt>View · Menu</dt><dd>Sport mode, reset</dd>
               </dl>
@@ -141,7 +141,7 @@
               <p class="hint">Switch to Mission, snap blocks under “when mission starts” and press Run. Moving any stick during a mission hands control back to you.</p>
             </section>
           </div>
-          <footer><span class="hint">Fly through the orange rings east of the pad, then land to save the flight to your logbook.</span><button class="btn primary" id="helpGo" type="button">Start flying</button></footer>
+          <footer><span class="hint">Fly through the orange rings east of the pad, then land: the flight log is uploaded to S3 automatically.</span><button class="btn primary" id="helpGo" type="button">Start flying</button></footer>
         </div>
       </div>
     </section>
@@ -151,7 +151,7 @@
       <header><h2>Flight data</h2><button class="btn ghost small" id="drawerClose" type="button">Close</button></header>
       <div class="tabs" role="tablist">
         <button type="button" data-tab="replay" class="on">Replay</button>
-        <button type="button" data-tab="saved">Saved</button>
+        <button type="button" data-tab="saved">Uploads</button>
         <button type="button" data-tab="settings">Settings</button>
       </div>
       <div class="drawer-body" id="drawerBody"></div>

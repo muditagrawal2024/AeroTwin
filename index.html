@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AeroTwin Drone Simulator</title>
-  <meta name="description" content="A browser drone simulator you can fly with the keyboard, a gamepad or block-based missions.">
+  <title>AeroTwin S3 Simulator</title>
+  <meta name="description" content="AeroTwin simulates Amazon S3 in the browser, with a drone flight simulator that fills the buckets with real data.">
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,11 +20,11 @@
   <section class="hero">
     <canvas id="heroScene" aria-hidden="true"></canvas>
     <div class="hero-copy">
-      <h1>Fly a drone three ways, right in the browser.</h1>
-      <p>AeroTwin is a quadcopter simulator with real flight physics. Fly it with your keyboard, plug in a gamepad, or snap blocks together into an autonomous mission. Every flight lands in your logbook, ready to replay in 3D.</p>
+      <h1>Amazon S3, simulated. A drone keeps the buckets busy.</h1>
+      <p>AeroTwin is a working model of Amazon S3: buckets, objects, versioning, storage classes, lifecycle rules, bucket policies, presigned URLs, event notifications and billing. Its data comes from a real-time drone simulator you fly with the keyboard, a gamepad or block missions, and every flight is uploaded as S3 objects.</p>
       <div class="actions">
-        <a class="btn primary big" href="sim.html">Launch simulator</a>
-        <a class="btn big" href="sim.html#mode=mission">Build a mission</a>
+        <a class="btn primary big" href="app.html#/">Open the S3 console</a>
+        <a class="btn big" href="sim.html">Fly the drone</a>
       </div>
     </div>
     <div class="hero-readout" aria-hidden="true">
@@ -35,6 +35,32 @@
   </section>
 
   <main class="page-main">
+    <section class="world" aria-labelledby="s3-h" style="padding-top:40px">
+      <div class="world-copy">
+        <h2 id="s3-h">What the S3 simulation covers</h2>
+        <ul class="facts">
+          <li><b>Buckets and objects</b> with real naming rules, prefixes as folders, MD5 ETags and multipart uploads.</li>
+          <li><b>Versioning</b> with delete markers and one-click restore of any earlier version.</li>
+          <li><b>Storage classes and lifecycle rules</b> from Standard to Deep Archive, plus a clock you can move 90 days ahead.</li>
+          <li><b>Security:</b> Block Public Access, bucket policies with an evaluator, SSE-S3 encryption and SigV4 presigned URLs.</li>
+          <li><b>Event notifications</b> that trigger a flight-indexer function, an AWS CLI emulator and a CloudTrail-style activity log.</li>
+          <li><b>Billing:</b> GB-month and request metering, a budget alert, a forecast and a fleet cost calculator.</li>
+        </ul>
+        <a class="btn" href="app.html#/about">How it maps to S3</a>
+      </div>
+      <div class="world-copy">
+        <h2>The enhancement: a drone that produces data</h2>
+        <ul class="facts">
+          <li><b>Flight logs:</b> telemetry recorded at 10 Hz and uploaded to <code>aerotwin-flight-logs</code> on every landing or crash.</li>
+          <li><b>Camera:</b> photos and video from the gimbal camera go to <code>aerotwin-drone-media</code>.</li>
+          <li><b>Missions</b> are Blockly programs saved to the versioned <code>aerotwin-missions</code> bucket.</li>
+          <li><b>Replays</b> read flight logs back from S3; archived logs have to be restored from Glacier first.</li>
+          <li><b>Three ways to fly:</b> keyboard (Mode 2), any gamepad, or block missions with loops and sensors.</li>
+        </ul>
+        <a class="btn" href="sim.html">Launch the simulator</a>
+      </div>
+    </section>
+
     <section class="ways" aria-labelledby="ways-h">
       <h2 id="ways-h">Pick your controls</h2>
       <div class="ways-grid">
@@ -44,14 +70,14 @@
             <div class="kgrp"><kbd>↑</kbd><div><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></div></div>
           </div>
           <h3>Keyboard</h3>
-          <p>The two hands mirror the two sticks of a real transmitter: W A S D for throttle and yaw, the arrow keys for pitch and roll. Keys ease in, so a short tap gives a gentle nudge.</p>
+          <p>The two hands mirror the two sticks of a real transmitter: W A S D for throttle and yaw, the arrow keys for pitch and roll.</p>
         </article>
         <article class="way">
           <div class="way-art pad" aria-hidden="true">
             <svg viewBox="0 0 200 110"><path d="M40 20h120c22 0 36 22 36 50 0 22-12 36-26 36-12 0-18-10-28-22H58c-10 12-16 22-28 22C16 106 4 92 4 70c0-28 14-50 36-50Z" fill="#1d3650" stroke="#2a4661" stroke-width="2"/><circle cx="62" cy="62" r="17" fill="#13253a" stroke="#ff7a1a" stroke-width="2"/><circle cx="66" cy="58" r="7" fill="#ff7a1a"/><circle cx="138" cy="62" r="17" fill="#13253a" stroke="#ff7a1a" stroke-width="2"/><circle cx="134" cy="67" r="7" fill="#ff7a1a"/><circle cx="160" cy="36" r="5" fill="#3fc6b4"/><circle cx="172" cy="46" r="5" fill="#ff6461"/><circle cx="148" cy="46" r="5" fill="#6aa7ff"/><circle cx="160" cy="56" r="5" fill="#f2c14e"/></svg>
           </div>
           <h3>Gamepad</h3>
-          <p>Any Xbox, PlayStation or generic controller works the moment you press a button. Mode 2 by default, Mode 1 on request, with adjustable dead zone and expo for precise hovering.</p>
+          <p>Any Xbox, PlayStation or generic controller works the moment you press a button, with adjustable dead zone and expo.</p>
         </article>
         <article class="way">
           <div class="way-art blocks" aria-hidden="true">
@@ -59,36 +85,13 @@
             <span class="blk">take off</span>
             <span class="blk loop">repeat 4 times</span>
             <span class="blk in">fly forward 30 m</span>
-            <span class="blk in cam">take a photo</span>
+            <span class="blk in cam">take a photo → S3</span>
             <span class="blk in">turn by 90 °</span>
             <span class="blk">return to home</span>
           </div>
           <h3>Block missions</h3>
-          <p>Write autonomous flights with Blockly: loops, variables, functions and sensors, plus orbit, curve and go-to moves. Grab the sticks during a mission and you are back in control.</p>
+          <p>Write autonomous flights with Blockly, store them in S3 with versioning, and grab the sticks at any time to take back control.</p>
         </article>
-      </div>
-    </section>
-
-    <section class="world" aria-labelledby="world-h">
-      <div class="world-copy">
-        <h2 id="world-h">A small district to explore</h2>
-        <ul class="facts">
-          <li><b>Vertiport</b> with a lit landing pad, your take-off and return-to-home point.</li>
-          <li><b>Ring course</b> of eight floating gates over the lake, timed per lap.</li>
-          <li><b>Radio tower</b> for point-of-interest orbits with the camera locked on.</li>
-          <li><b>City blocks</b> with a rooftop pad for precision landings.</li>
-          <li><b>Day, dusk and night</b>, wind gusts, sport mode and a draining battery.</li>
-        </ul>
-      </div>
-      <div class="world-copy">
-        <h2>Every flight is kept</h2>
-        <ul class="facts">
-          <li>Telemetry recorded ten times a second from take-off to landing.</li>
-          <li>Ghost replays of any past flight, with scrubbing and speed control.</li>
-          <li>Photos and video from the stabilised gimbal camera.</li>
-          <li>Missions saved with their earlier versions, and Drone Commander programs import as they are.</li>
-        </ul>
-        <a class="btn" href="logbook.html">Open the logbook</a>
       </div>
     </section>
 
@@ -119,7 +122,7 @@
 
   <footer class="site-foot">
     <div class="page-main foot-inner">
-      <p>AeroTwin by Mudit. Built on ideas and code from <a href="https://github.com/vroby65/DroneCommander" target="_blank" rel="noopener">Drone Commander</a> by vroby65 and <a href="https://github.com/MSubham06/Drone_Simulator" target="_blank" rel="noopener">Drone Simulator</a> by Subham (both MIT), with three.js and Google Blockly.</p>
+      <p>AeroTwin by Mudit for BCSE355L Cloud Architecture Design, DA3. Hosted on Amazon S3 and CloudFront. Built on ideas and code from <a href="https://github.com/vroby65/DroneCommander" target="_blank" rel="noopener">Drone Commander</a> by vroby65 and <a href="https://github.com/MSubham06/Drone_Simulator" target="_blank" rel="noopener">Drone Simulator</a> by Subham (both MIT), with three.js and Google Blockly.</p>
     </div>
   </footer>
   <script type="module" src="assets/js/landing.js"></script>

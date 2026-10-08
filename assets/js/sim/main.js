@@ -1,6 +1,6 @@
 // AeroTwin flight simulator: ties together the world, flight model,
-// keyboard/gamepad input, Blockly missions, HUD and the logbook.
-import { store } from '../core/store.js';
+// keyboard/gamepad input, Blockly missions, HUD and the S3 data path.
+import { s3 } from '../core/s3.js';
 import { h, fmtBytes, download } from '../core/util.js';
 import { topbar, toast } from '../core/ui.js';
 import { buildWorld, toWorld } from './world.js';
@@ -9,7 +9,8 @@ import { FlightModel } from './flight.js';
 import { InputManager } from './input.js';
 import { Autopilot } from './autopilot.js';
 import { MissionEditor, EMPTY_MISSION } from './mission.js';
-import { Recorder } from './recorder.js';
+import { Recorder, uploadMedia, putNote, LOG_BUCKET, MEDIA_BUCKET } from './recorder.js';
+const MISSION_BUCKET = 'aerotwin-missions';
 import { MotorAudio } from './audio.js';
 
 const THREE = window.THREE;
@@ -23,6 +24,7 @@ try { settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('aerotwin.sim
 const saveSettings = () => { try { localStorage.setItem('aerotwin.sim', JSON.stringify(settings)); } catch { /* ignore */ } };
 
 $('top').replaceWith(topbar({ active: 'sim' }));
+s3.source = 'drone-sim';
 
 // ---------------- renderer and scene ----------------
 const canvas = $('view');
@@ -105,17 +107,18 @@ function banner(title, sub = '', kind = '', ms = 2200) {
 }
 
 const saves = [];
+const objHref = (bucket, key) => `app.html#/s3/${encodeURIComponent(bucket)}/object?key=${encodeURIComponent(key)}`;
 function feed(item) {
   saves.unshift(item);
   if (saves.length > 60) saves.pop();
   const el = h('div', { class: `feed-item ${item.ok ? '' : 'err'}` },
-    item.ok ? h('a', { href: item.href || 'logbook.html', target: '_blank', rel: 'noopener' },
-      h('span', { class: 'ok' }, 'Saved '), item.label, h('div', { class: 'meta' }, item.detail || ''))
-      : h('span', {}, `Could not save: ${item.error}`));
+    item.ok ? h('a', { href: objHref(item.bucket, item.key), target: '_blank', rel: 'noopener' },
+      h('span', { class: 'ok' }, 'PUT 200 '), `s3://${item.bucket}/${item.key}`, h('div', { class: 'meta' }, `${fmtBytes(item.size)}, ETag ${String(item.etag).slice(0, 14)}…`))
+      : h('span', {}, `PUT failed: ${item.error}`));
   const f = $('feed');
   f.prepend(el);
   while (f.children.length > 3) f.lastElementChild.remove();
-  setTimeout(() => el.remove(), 6000);
+  setTimeout(() => el.remove(), 7000);
   if (drawerTab === 'saved' && !$('drawer').hidden) renderDrawer();
 }
 
@@ -146,6 +149,14 @@ const autopilot = new Autopilot({
     photo: src => takePhoto(src),
     startRecording: () => startRecording(),
     stopRecording: () => stopRecording(),
+    uploadLog: () => saveLog(false, false),
+    putNote: async (key, text) => {
+      try {
+        const body = `${text}\n\nposition x=${autopilot.x} z=${autopilot.z} altitude=${autopilot.altitude} heading=${autopilot.direction}\ncallsign ${settings.callsign}\n`;
+        const r = await putNote(key, body, { 'x-amz-meta-callsign': settings.callsign });
+        feed({ ok: true, bucket: MEDIA_BUCKET, key, size: r.size, etag: r.etag });
+      } catch (e) { feed({ ok: false, error: e.message }); }
+    },
   }
 });
 
@@ -164,17 +175,17 @@ async function endFlight(reason) {
   if (recording) await stopRecording();
   if (recorder.flying) {
     recorder.event(reason);
-    if (settings.autoUpload) await saveLog(reason === 'crashed');
+    if (settings.autoUpload) await saveLog(true, reason === 'crashed');
     else { recorder.active = null; }
   }
 }
 
-async function saveLog(crashed = false) {
+async function saveLog(final = true, crashed = false) {
   try {
-    const r = await recorder.save({ crashed });
+    const r = await recorder.upload({ final, crashed });
     if (r) {
-      feed({ ok: true, label: `flight ${r.id}`, detail: `${r.log.durationS} s, ${r.log.stats.distanceM} m flown${crashed ? ', crashed' : ''}`, href: `logbook.html#${encodeURIComponent(r.id)}` });
-      toast(crashed ? 'Crash recorded' : 'Flight saved', `${r.id} is in your logbook`, crashed ? 'warn' : 'ok');
+      feed({ ok: true, bucket: LOG_BUCKET, key: r.key, size: r.size, etag: r.etag });
+      if (final) toast(crashed ? 'Crash log uploaded to S3' : 'Flight log uploaded to S3', `s3://${LOG_BUCKET}/${r.key}`, crashed ? 'warn' : 'ok');
     }
     return r;
   } catch (e) { feed({ ok: false, error: e.message }); }
@@ -277,7 +288,7 @@ function captureFrame(osd = true) {
   if (osd) {
     shotCtx.fillStyle = 'rgba(0,0,0,0.45)'; shotCtx.fillRect(0, 446, 640, 34);
     shotCtx.fillStyle = '#fff'; shotCtx.font = '14px "B612 Mono", monospace';
-    const d = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const d = new Date(s3.now()).toISOString().replace('T', ' ').slice(0, 19);
     shotCtx.fillText(`${settings.callsign}  ${d}Z  x ${autopilot.x.toFixed(1)}  z ${autopilot.z.toFixed(1)}  alt ${flight.pos.y.toFixed(1)} m  hdg ${String(Math.round(flight.heading)).padStart(3, '0')}`, 12, 468);
   }
   return shotCanvas;
@@ -288,9 +299,9 @@ async function takePhoto(src = 'pilot') {
   const blob = await new Promise(r => c.toBlob(r, 'image/png'));
   flashPip();
   try {
-    const r = await store.addMedia('photo', blob, { callsign: settings.callsign, altitude: +flight.pos.y.toFixed(1), heading: Math.round(flight.heading), x: autopilot.x, z: autopilot.z, trigger: src });
-    if (recorder.active) { recorder.active.photos++; recorder.event('photo', { id: r.id }); }
-    feed({ ok: true, label: `photo ${r.id}`, detail: `${fmtBytes(r.size)} PNG at ${flight.pos.y.toFixed(1)} m`, href: 'logbook.html#media' });
+    const r = await uploadMedia('photos', blob, 'png', { 'x-amz-meta-callsign': settings.callsign, 'x-amz-meta-altitude': flight.pos.y.toFixed(1), 'x-amz-meta-heading': flight.heading.toFixed(0), 'x-amz-meta-trigger': src });
+    if (recorder.active) { recorder.active.photos++; recorder.event('photo', { key: r.key }); }
+    feed({ ok: true, bucket: MEDIA_BUCKET, key: r.key, size: r.size, etag: r.etag });
   } catch (e) { feed({ ok: false, error: e.message }); }
 }
 function flashPip() { const p = $('pip'); p.style.boxShadow = '0 0 0 3px #fff'; setTimeout(() => { p.style.boxShadow = ''; }, 140); }
@@ -321,9 +332,9 @@ function stopRecording() {
       const type = r.mime.split(';')[0];
       const blob = new Blob(r.chunks, { type });
       try {
-        const up = await store.addMedia('video', blob, { callsign: settings.callsign });
-        recorder.event('recording-saved', { id: up.id });
-        feed({ ok: true, label: `video ${up.id}`, detail: fmtBytes(up.size), href: 'logbook.html#media' });
+        const up = await uploadMedia('videos', blob, type.includes('mp4') ? 'mp4' : 'webm', { 'x-amz-meta-callsign': settings.callsign });
+        recorder.event('recording-saved', { key: up.key });
+        feed({ ok: true, bucket: MEDIA_BUCKET, key: up.key, size: up.size, etag: up.etag });
       } catch (e) { feed({ ok: false, error: e.message }); }
       resolve();
     };
@@ -382,21 +393,21 @@ function checkRings() {
 
 // ---------------- replay ----------------
 let replay = null;
-async function loadReplay(id) {
+async function loadReplay(bucket, key) {
   try {
-    const log = await store.getFlight(id);
-    if (!log) throw new Error(`Flight ${id} is not in the logbook.`);
+    const log = JSON.parse(await s3.getObjectText(bucket, key));
     if (!log.samples?.length) throw new Error('This flight log has no samples.');
-    replay = { log, t: 0, playing: true, speed: 1, id };
+    replay = { log, t: 0, playing: true, speed: 1, key };
     if (replayLine) scene.remove(replayLine);
     const pts = log.samples.map(s => { const w = toWorld(s[1], s[3]); return new THREE.Vector3(w.x, s[2] + 0.05, w.z); });
     replayLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x3fc6b4, transparent: true, opacity: 0.85 }));
     scene.add(replayLine);
     ghost.root.visible = true;
-    banner('Replaying flight', `${log.flightId}, ${log.durationS} s`, 'ok', 2600);
+    banner('Replaying flight from S3', `${log.flightId}, ${log.durationS} s, GetObject s3://${bucket}`, 'ok', 2600);
     openDrawer('replay');
   } catch (e) {
-    toast('Replay failed', e.message, 'error', 6000);
+    const archived = e.code === 'InvalidObjectState';
+    toast(archived ? 'Flight log is archived in Glacier' : (e.code || 'Replay failed'), archived ? 'The lifecycle rule moved this log to Glacier. Restore it in the S3 console, then replay again.' : e.message, 'error', 8000);
   }
 }
 function stopReplay() {
@@ -440,25 +451,26 @@ function setMode(mode) {
     let draft = null;
     try { draft = localStorage.getItem('aerotwin.missionDraft'); } catch { /* ignore */ }
     if (draft) { try { editor.load(draft); } catch { editor.load(EMPTY_MISSION); } }
-    else loadMission('Survey square');
+    else loadMission('samples/survey-square.xml');
     refreshMissionList();
   }
   setTimeout(() => { resize(); editor?.resize(); }, 30);
 }
 async function refreshMissionList() {
   const sel = $('missionList');
-  const list = await store.listMissions();
-  sel.replaceChildren(h('option', { value: '' }, 'Open a saved mission…'),
-    h('optgroup', { label: 'Your missions' }, ...list.filter(m => !m.sample).map(m => h('option', { value: m.id, selected: m.id === missionKey }, m.id))),
-    h('optgroup', { label: 'Examples' }, ...list.filter(m => m.sample).map(m => h('option', { value: m.id, selected: m.id === missionKey }, m.id))));
+  try {
+    const r = await s3.listObjectsV2(MISSION_BUCKET, { prefix: '', delimiter: '' });
+    sel.replaceChildren(h('option', { value: '' }, 'Open from s3://aerotwin-missions…'), ...r.contents.filter(o => o.key.endsWith('.xml')).map(o => h('option', { value: o.key, selected: o.key === missionKey }, o.key)));
+  } catch (e) { mlog(`Could not list missions: ${e.message}`, 'error'); }
 }
-async function loadMission(name) {
-  const m = await store.getMission(name);
-  if (!m) return mlog(`No mission called "${name}".`, 'error');
-  editor.load(m.xml);
-  missionKey = name;
-  $('missionName').textContent = m.sample ? `${name} (example)` : name;
-  mlog(`Opened "${name}".`, 'ok');
+async function loadMission(key) {
+  try {
+    const xml = await s3.getObjectText(MISSION_BUCKET, key);
+    editor.load(xml);
+    missionKey = key;
+    $('missionName').textContent = `s3://${MISSION_BUCKET}/${key}`;
+    mlog(`GetObject s3://${MISSION_BUCKET}/${key}`, 'ok');
+  } catch (e) { mlog(`${e.code || 'Error'}: ${e.message}`, 'error'); }
 }
 async function runMission() {
   if (!editor || editor.running) return;
@@ -497,20 +509,23 @@ $('exportMission').onclick = () => download(new Blob([editor.xml()], { type: 'te
 $('importMission').onclick = () => $('importFile').click();
 $('importFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  try { editor.load(await f.text()); missionKey = f.name.replace(/\.xml$/i, ''); $('missionName').textContent = `${f.name} (not saved yet)`; mlog(`Imported ${f.name}.`, 'ok'); }
+  try { editor.load(await f.text()); missionKey = 'imported/' + f.name; $('missionName').textContent = `${f.name} (not saved to S3 yet)`; mlog(`Imported ${f.name}.`, 'ok'); }
   catch (err) { mlog(`That file is not a Blockly XML program: ${err.message}`, 'error'); }
   e.target.value = '';
 };
 $('saveMission').onclick = async () => {
-  const current = await store.getMission(missionKey);
-  const name = prompt('Save mission as:', current?.sample ? `My ${missionKey.toLowerCase()}` : (missionKey || 'My mission'));
-  if (!name?.trim()) return;
-  const r = await store.putMission(name.trim(), editor.xml());
-  missionKey = r.id;
-  $('missionName').textContent = r.id;
-  feed({ ok: true, label: `mission "${r.id}"`, detail: r.versions.length ? `${r.versions.length} earlier version(s) kept` : 'first version', href: 'logbook.html#missions' });
-  mlog(`Saved "${r.id}".`, 'ok');
-  refreshMissionList();
+  const suggested = missionKey && !missionKey.startsWith('samples/') ? missionKey : `my-missions/${(missionKey.split('/').pop() || 'mission.xml')}`;
+  const key = prompt('Save to s3://aerotwin-missions/ with key:', suggested);
+  if (!key?.trim()) return;
+  try {
+    const k = key.trim().endsWith('.xml') ? key.trim() : key.trim() + '.xml';
+    const r = await s3.putObject(MISSION_BUCKET, k, editor.xml(), { contentType: 'application/xml', metadata: { 'x-amz-meta-callsign': settings.callsign } });
+    missionKey = r.key;
+    $('missionName').textContent = `s3://${MISSION_BUCKET}/${r.key}`;
+    feed({ ok: true, bucket: MISSION_BUCKET, key: r.key, size: r.size, etag: r.etag });
+    mlog(`Saved as version ${r.versionId.slice(0, 10)}… (versioning is on, earlier saves are kept).`, 'ok');
+    refreshMissionList();
+  } catch (e) { mlog(`${e.code}: ${e.message}`, 'error'); }
 };
 
 // ---------------- drawer ----------------
@@ -537,19 +552,31 @@ async function renderDrawer() {
             h('button', { class: 'btn small', type: 'button', onclick: e => { replay.speed = replay.speed >= 8 ? 1 : replay.speed * 2; e.target.textContent = `${replay.speed}×`; } }, `${replay.speed}×`),
             h('button', { class: 'btn small danger', type: 'button', onclick: stopReplay }, 'Stop')))));
     }
-    const list = await store.listFlights();
-    body.replaceChildren(...items, ...(list.length ? list.slice(0, 40).map(f => h('div', { class: 'flight-row' },
-      h('b', {}, f.flightId),
-      h('span', { class: 'hint' }, `${new Date(f.startedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}, ${Math.round(f.durationS)} s, ${Math.round(f.distanceM)} m${f.crashed ? ', crashed' : ''}`),
-      h('button', { class: 'btn small', type: 'button', onclick: () => loadReplay(f.id) }, replay?.id === f.id ? 'Restart' : 'Replay'))) : [h('p', {}, 'No flights yet. Take off and land to record one.')]));
+    items.push(h('p', { class: 'hint' }, 'Flight logs are read back from s3://aerotwin-flight-logs with GetObject. Logs that the lifecycle rule moved to Glacier must be restored first.'));
+    body.replaceChildren(...items, h('p', { class: 'hint' }, 'Listing flights…'));
+    let list = [];
+    try { list = JSON.parse(await s3.getObjectText(LOG_BUCKET, 'analytics/flight-index.json')); }
+    catch {
+      try { list = (await s3.listObjectsV2(LOG_BUCKET, { prefix: 'logs/', delimiter: '' })).contents.map(o => ({ key: o.key, flightId: o.key.split('/').pop().replace('.json', '') })).reverse(); } catch { /* none */ }
+    }
+    const objs = await s3.listObjectsV2(LOG_BUCKET, { prefix: 'logs/', delimiter: '', log: false }).catch(() => ({ contents: [] }));
+    const byKey = Object.fromEntries(objs.contents.map(o => [o.key, o]));
+    body.replaceChildren(...items, ...(list.length ? list.slice(0, 40).map(f => {
+      const o = byKey[f.key];
+      const archived = o && (o.storageClass === 'GLACIER' || o.storageClass === 'DEEP_ARCHIVE') && o.restoreStatus !== 'restored';
+      return h('div', { class: 'flight-row' },
+        h('b', {}, f.flightId),
+        h('span', { class: 'hint' }, `${f.startedAt ? new Date(f.startedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : ''}${f.durationS ? `, ${Math.round(f.durationS)} s` : ''}${f.crashed ? ', crashed' : ''}, ${o ? o.storageClass.replace('_', '-') : 'deleted'}`),
+        archived ? h('a', { class: 'btn small', href: objHref(LOG_BUCKET, f.key), target: '_blank', rel: 'noopener' }, 'Restore') :
+          h('button', { class: 'btn small', type: 'button', disabled: !o, onclick: () => loadReplay(LOG_BUCKET, f.key) }, replay?.key === f.key ? 'Restart' : 'Replay'));
+    }) : [h('p', {}, 'No flights stored yet. Take off and land to create one.')]));
   } else if (drawerTab === 'saved') {
     body.replaceChildren(
-      h('p', { class: 'hint' }, 'Everything saved during this session. The full history is in the logbook.'),
+      h('p', { class: 'hint' }, 'Objects this simulator has written to S3 in this session. Open one to inspect it in the S3 console.'),
       ...(saves.length ? saves.map(u => h('div', { class: 'flight-row' },
-        h('b', {}, u.ok ? u.label : 'Save failed'),
-        h('span', { class: 'hint' }, u.ok ? u.detail : u.error),
-        u.ok ? h('a', { class: 'btn small', href: u.href || 'logbook.html', target: '_blank', rel: 'noopener' }, 'Open') : h('span'))) : [h('p', {}, 'Nothing saved yet. Press P for a photo, or land after a flight.')]),
-      h('a', { class: 'btn', href: 'logbook.html', target: '_blank', rel: 'noopener' }, 'Open the logbook'));
+        h('b', { style: 'word-break:break-all;font-family:var(--mono);font-size:12px' }, u.ok ? `s3://${u.bucket}/${u.key}` : 'Upload failed'),
+        h('span', { class: 'hint' }, u.ok ? `${fmtBytes(u.size)}, ETag ${u.etag}` : u.error),
+        u.ok ? h('a', { class: 'btn small', href: objHref(u.bucket, u.key), target: '_blank', rel: 'noopener' }, 'Open') : h('span'))) : [h('p', {}, 'Nothing uploaded yet. Press P for a photo, or land after a flight.')]));
   } else {
     const field = (label, el, hint) => h('label', { class: 'field' }, h('span', {}, label), el, hint ? h('span', { class: 'hint' }, hint) : null);
     const toggle = (label, key, apply) => h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: settings[key], onchange: e => { settings[key] = e.target.checked; apply?.(e.target.checked); saveSettings(); } }), label);
@@ -563,7 +590,7 @@ async function renderDrawer() {
       toggle('Invert gamepad pitch', 'invertPitch', v => { input.invertPitch = v; }),
       toggle('Sport mode (G)', 'sport', v => { flight.sport = v; }),
       toggle('Wind gusts', 'wind', v => { flight.wind = v; }),
-      toggle('Save a flight log after each landing or crash', 'autoUpload'),
+      toggle('Upload the flight log to S3 after each landing or crash', 'autoUpload'),
       toggle('Shadows', 'shadows', v => { renderer.shadowMap.enabled = v; scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); }); }),
       field(`Motor volume (${Math.round(settings.volume * 100)}%)`, h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: settings.volume, oninput: e => { settings.volume = audio.volume = Number(e.target.value); e.target.previousSibling.textContent = `Motor volume (${Math.round(settings.volume * 100)}%)`; saveSettings(); } }))));
   }
@@ -870,7 +897,7 @@ function onCrash() {
 }
 
 // ---------------- boot ----------------
-store.ready().then(() => {
+s3.ready().then(() => {
   resize();
   setTod('Day');
   resetRings();
@@ -881,13 +908,14 @@ store.ready().then(() => {
   if (!settings.helpSeen) toggleHelp(true);
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get('replay')) {
+    const [bucket, ...rest] = hash.get('replay').split('/');
     toggleHelp(false);
-    loadReplay(hash.get('replay'));
+    loadReplay(bucket, rest.join('/'));
   }
   if (hash.get('mode') === 'mission') { toggleHelp(false); setMode('mission'); }
   if (hash.get('mission')) { toggleHelp(false); setMode('mission'); setTimeout(() => loadMission(hash.get('mission')), 300); }
 }).catch(e => {
-  toast('Browser storage is unavailable', 'Flights cannot be saved in this window. Open the page in a normal (non-private) window to keep a logbook.', 'error', 15000);
+  toast('Browser storage is unavailable', 'The simulated S3 account needs IndexedDB. Open the page in a normal (non-private) window.', 'error', 15000);
   console.error(e);
   resize(); setTod('Day'); frame();
 });
@@ -902,4 +930,4 @@ async function advance(seconds, sticks) {
   }
   input.override = null;
 }
-window.aerotwin = { pauseRender: false, renderOnce: () => render(0.016, simTime, input.sticks), advance, flight, autopilot, recorder, store, get control() { return control; }, get autoTask() { return autoTask; }, takeoffOrLand, returnHome, takePhoto, loadReplay, setMode, runMission, get editor() { return editor; } };
+window.aerotwin = { pauseRender: false, renderOnce: () => render(0.016, simTime, input.sticks), advance, flight, autopilot, recorder, s3, get control() { return control; }, get autoTask() { return autoTask; }, takeoffOrLand, returnHome, takePhoto, loadReplay, setMode, runMission, get editor() { return editor; } };

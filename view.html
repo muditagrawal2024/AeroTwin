@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S3 object endpoint</title>
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+    .bar { font: 12px system-ui, sans-serif; background: #0f1d2c; color: #95abc1; padding: 8px 14px; }
+    .bar b { color: #ff7a1a; }
+    .bar a { color: #e7eef5; }
+    pre.xml { margin: 0; padding: 14px; font: 13px/1.6 ui-monospace, Consolas, monospace; white-space: pre-wrap; color: #222; }
+    .obj { display: grid; place-items: center; min-height: calc(100vh - 40px); background: #0e0e0e; }
+    .obj img, .obj video { max-width: 100%; max-height: calc(100vh - 40px); }
+    .obj pre { background: #fff; color: #111; margin: 0; padding: 14px; width: 100%; box-sizing: border-box; min-height: calc(100vh - 40px); font: 13px/1.6 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+    @media (prefers-color-scheme: dark) { body { background: #111; color: #ddd; } pre.xml { color: #ddd; } }
+  </style>
+</head>
+<body>
+  <div class="bar"><b>AeroTwin S3 endpoint emulator.</b> This page plays the role of <span id="host">bucket.s3.amazonaws.com</span> and answers the way S3 would. <a href="app.html#/activity">See the request in the activity log</a></div>
+  <main id="out"><pre class="xml">Loading…</pre></main>
+  <script type="module">
+    import { s3 } from './assets/js/core/s3.js';
+    import { esc } from './assets/js/core/util.js';
+    const out = document.getElementById('out');
+    const q = new URLSearchParams(location.search);
+    const bucket = q.get('bucket'), key = q.get('key');
+    document.getElementById('host').textContent = `${bucket}.s3.amazonaws.com/${key}`;
+    const xmlError = (code, message) => {
+      const rid = crypto.getRandomValues(new Uint8Array(8)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '').toUpperCase();
+      out.innerHTML = `<pre class="xml">${esc(`This XML file does not appear to have any style information associated with it. The document tree is shown below.\n\n<Error>\n  <Code>${code}</Code>\n  <Message>${message}</Message>\n  <Key>${key}</Key>\n  <RequestId>${rid}</RequestId>\n  <HostId>${btoa(rid + rid).slice(0, 44)}</HostId>\n</Error>`)}</pre>`;
+    };
+    try {
+      await s3.ready();
+      s3.source = q.has('X-Amz-Signature') ? 'presigned' : 'public';
+      try { await s3.authorizeGet(q); }
+      catch (e) { await s3._log({ api: 'GetObject', bucket, key, status: e.status || 403, error: e.code }); throw e; }
+      const r = await s3.getObject(bucket, key, { transferOut: true });
+      const url = URL.createObjectURL(r.body);
+      const type = r.meta.contentType || '';
+      document.title = key.split('/').pop();
+      if (type.startsWith('image/')) out.innerHTML = `<div class="obj"><img src="${url}" alt="${esc(key)}"></div>`;
+      else if (type.startsWith('video/')) out.innerHTML = `<div class="obj"><video src="${url}" controls autoplay></video></div>`;
+      else if (type.startsWith('text/') || type.includes('json') || type.includes('xml')) out.innerHTML = `<div class="obj"><pre>${esc(await r.body.text())}</pre></div>`;
+      else { const a = document.createElement('a'); a.href = url; a.download = key.split('/').pop(); a.click(); out.innerHTML = '<pre class="xml">Download started.</pre>'; }
+    } catch (e) {
+      xmlError(e.code || 'InternalError', e.message || String(e));
+    }
+  </script>
+</body>
+</html>

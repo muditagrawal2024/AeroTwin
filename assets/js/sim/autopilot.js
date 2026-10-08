@@ -223,6 +223,8 @@ export class Autopilot {
   async takePhoto() { await this.sim.hooks.photo('mission'); }
   async startRecording() { await this.sim.hooks.startRecording(); }
   async saveRecording() { await this.sim.hooks.stopRecording(); }
+  async uploadFlightLog() { await this.sim.hooks.uploadLog(); }
+  async putNote(key, text) { await this.sim.hooks.putNote(String(key || 'notes/note.txt'), String(text ?? '')); }
 }
 
 function easeInOut(p) { return p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; }

@@ -1,4 +1,8 @@
-// First-run data: sample missions and a demo flight for the logbook.
+// First-run data: the buckets, rules and sample objects a new AeroTwin
+// account starts with, so every S3 feature has something to show.
+import { publicReadPolicy } from './policy.js';
+
+const DAY = 86400000;
 
 // --- tiny Blockly XML builder used for the sample missions ---
 const num = n => `<shadow type="math_number"><field name="NUM">${n}</field></shadow>`;
@@ -26,7 +30,7 @@ const key = k => `<block type="sensor_keypressed"><field name="KEY">${k}</field>
 const text = t => `<shadow type="text"><field name="TEXT">${t}</field></shadow>`;
 
 export const SAMPLE_MISSIONS = {
-  'Survey square': missionXml([
+  'samples/survey-square.xml': missionXml([
     blk('take_off'),
     blk('set_speed', { values: { SPEED: 4 } }),
     blk('set_altitude', { values: { ALTITUDE: 18 } }),
@@ -38,7 +42,7 @@ export const SAMPLE_MISSIONS = {
     blk('return_to_base'),
     blk('land')
   ]),
-  'Tower orbit': missionXml([
+  'samples/tower-orbit.xml': missionXml([
     blk('take_off'),
     blk('set_speed', { values: { SPEED: 6 } }),
     blk('go_to', { values: { X: 40, Y: 32, Z: 52 } }),
@@ -49,7 +53,7 @@ export const SAMPLE_MISSIONS = {
     blk('return_to_base'),
     blk('land')
   ]),
-  'Smoke spiral': missionXml([
+  'samples/smoke-spiral.xml': missionXml([
     blk('take_off'),
     blk('set_speed', { values: { SPEED: 5 } }),
     blk('smoke', { raw: { SMOKE: bool(true) } }),
@@ -61,7 +65,7 @@ export const SAMPLE_MISSIONS = {
     blk('return_to_base'),
     blk('land')
   ]),
-  'Keyboard steered': missionXml([
+  'samples/keyboard-steered.xml': missionXml([
     blk('take_off'),
     blk('log_message', { raw: { TEXT: text('Steer with I J K L, climb with U, finish with Q') } }),
     blk('controls_whileUntil', {
@@ -93,16 +97,17 @@ export const SAMPLE_MISSIONS = {
     blk('return_to_base'),
     blk('land')
   ]),
-  'Photo patrol': missionXml([
+  'samples/s3-data-run.xml': missionXml([
     blk('take_off'),
     blk('set_speed', { values: { SPEED: 5 } }),
     blk('set_altitude', { values: { ALTITUDE: 22 } }),
     blk('controls_repeat_ext', { values: { TIMES: 3 }, statements: { DO: [
       blk('walk', { values: { DIST: 25 } }),
       blk('take_photo'),
-      blk('log_message', { raw: { TEXT: text('Waypoint reached, photo saved') } }),
+      blk('s3_put_note', { raw: { KEY: text('notes/waypoint.txt'), TEXT: text('Waypoint reached, photo captured') } }),
       blk('change_angle', { values: { ANGLE: 120 } })
     ] } }),
+    blk('upload_flight_log'),
     blk('return_to_base'),
     blk('land')
   ])
@@ -151,3 +156,71 @@ export function syntheticFlight(startedAt, { seconds = 90, seed = 1, label = 'FL
   };
 }
 
+
+const droneSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" width="480" height="320">
+<rect width="240" height="160" fill="#14273a"/>
+<g stroke="#ff7a1a" stroke-width="5" stroke-linecap="round"><line x1="70" y1="50" x2="170" y2="110"/><line x1="170" y1="50" x2="70" y2="110"/></g>
+<g fill="none" stroke="#9fc3dc" stroke-width="3"><ellipse cx="70" cy="50" rx="30" ry="7"/><ellipse cx="170" cy="50" rx="30" ry="7"/><ellipse cx="70" cy="110" rx="30" ry="7"/><ellipse cx="170" cy="110" rx="30" ry="7"/></g>
+<rect x="100" y="66" width="40" height="28" rx="8" fill="#e8eef4"/><circle cx="120" cy="80" r="6" fill="#14273a"/>
+</svg>`;
+
+export async function seed(s3) {
+  // Idempotent: if an earlier page load was interrupted part-way through
+  // seeding, only the missing buckets (and their sample objects) are created.
+  const now = s3.now();
+  const fresh = {};
+  const has = async (b, k) => !!(await s3._findVersion(b, k));
+  const ensure = async (name, opts) => { fresh[name] = !(await s3.headBucket(name)); if (fresh[name]) await s3.createBucket(name, opts); };
+  const logs = 'aerotwin-flight-logs';
+  const media = 'aerotwin-drone-media';
+  const missions = 'aerotwin-missions';
+  const gallery = 'aerotwin-public-gallery';
+
+  await ensure(logs, {
+    versioning: 'Enabled',
+    tags: { project: 'AeroTwin', data: 'telemetry' },
+    lifecycle: [{
+      id: 'tier-flight-logs', status: 'Enabled', prefix: 'logs/',
+      transitions: [{ days: 30, storageClass: 'STANDARD_IA' }, { days: 90, storageClass: 'GLACIER' }],
+      expirationDays: 365, noncurrentExpirationDays: 30
+    }],
+    notifications: [{ id: 'index-new-flights', events: ['s3:ObjectCreated:*'], prefix: 'logs/', suffix: '.json', target: 'flight-indexer' }]
+  });
+  await ensure(media, {
+    tags: { project: 'AeroTwin', data: 'camera' },
+    lifecycle: [{
+      id: 'archive-raw-video', status: 'Enabled', prefix: 'videos/',
+      transitions: [{ days: 30, storageClass: 'STANDARD_IA' }, { days: 180, storageClass: 'DEEP_ARCHIVE' }]
+    }]
+  });
+  await ensure(missions, { versioning: 'Enabled', tags: { project: 'AeroTwin', data: 'missions' } });
+  await ensure(gallery, { blockPublicAccess: false, tags: { project: 'AeroTwin', access: 'public' } });
+  if (fresh[gallery]) await s3.putBucketPolicy(gallery, publicReadPolicy(gallery, 'shared/'));
+
+  for (const [k, xml] of Object.entries(SAMPLE_MISSIONS)) {
+    if (await has(missions, k)) continue;
+    await s3.putObject(missions, k, xml, { contentType: 'application/xml', metadata: { 'x-amz-meta-author': 'aerotwin' } });
+  }
+
+  const flights = [
+    { daysAgo: 120, seconds: 70, seed: 3 },
+    { daysAgo: 45, seconds: 90, seed: 1 },
+    { daysAgo: 2, seconds: 60, seed: 2 }
+  ];
+  for (const f of flights) {
+    const started = now - f.daysAgo * DAY;
+    const d = new Date(started).toISOString();
+    const id = `FLT-${d.slice(0, 10).replace(/-/g, '')}-S${f.seed}`;
+    const key = `logs/${d.slice(0, 4)}/${d.slice(5, 7)}/${d.slice(8, 10)}/${id}.json`;
+    if (await has(logs, key)) continue;
+    const log = syntheticFlight(started, { ...f, label: id });
+    await s3.putObject(logs, key, JSON.stringify(log), {
+      contentType: 'application/json', lastModified: started + f.seconds * 1000,
+      metadata: { 'x-amz-meta-callsign': 'AT-01', 'x-amz-meta-control': 'keyboard' }
+    });
+  }
+
+  if (!(await has(gallery, 'shared/aerotwin-drone.svg'))) await s3.putObject(gallery, 'shared/aerotwin-drone.svg', droneSvg, { contentType: 'image/svg+xml' });
+  if (!(await has(gallery, 'shared/readme.txt'))) await s3.putObject(gallery, 'shared/readme.txt', 'Objects under shared/ are readable by anyone because of the bucket policy.\nEverything else in this bucket stays private.\n', { contentType: 'text/plain' });
+  if (!(await has(gallery, 'private/owner-notes.txt'))) await s3.putObject(gallery, 'private/owner-notes.txt', 'This object is outside shared/, so the public URL returns AccessDenied.\n', { contentType: 'text/plain' });
+}

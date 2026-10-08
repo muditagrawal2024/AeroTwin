@@ -6,6 +6,7 @@ const Blockly = window.Blockly;
 const JS = Blockly.JavaScript;
 
 const DRONE = '#ff7a1a', SENSOR = '#3fc6b4', CAMERA = '#6aa7ff', FLOW = '#95abc1';
+const CLOUD = CAMERA;
 const numIn = name => ({ type: 'input_value', name, check: 'Number' });
 
 const BLOCKS = [
@@ -29,9 +30,11 @@ const BLOCKS = [
   { type: 'wait', message0: 'hover for %1 s', args0: [numIn('DIST')], inputsInline: true, previousStatement: null, nextStatement: null, colour: DRONE, tooltip: 'Hold position for a number of seconds.' },
   { type: 'set_speed', message0: 'set speed to %1 m/s', args0: [numIn('SPEED')], inputsInline: true, previousStatement: null, nextStatement: null, colour: DRONE, tooltip: 'Cruise speed for moves, from 0.5 to 15 m/s.' },
   { type: 'smoke', message0: 'smoke trail %1', args0: [{ type: 'input_value', name: 'SMOKE', check: 'Boolean' }], previousStatement: null, nextStatement: null, colour: DRONE, tooltip: 'Draw a trail behind the drone.' },
-  { type: 'take_photo', message0: 'take a photo', previousStatement: null, nextStatement: null, colour: CAMERA, tooltip: 'Capture the gimbal camera and save the picture to the logbook.' },
-  { type: 'start_recording', message0: 'start video recording', previousStatement: null, nextStatement: null, colour: CAMERA, tooltip: 'Record the gimbal camera.' },
-  { type: 'save_recording', message0: 'stop recording and save', previousStatement: null, nextStatement: null, colour: CAMERA, tooltip: 'Stop recording and save the video to the logbook.' },
+  { type: 'take_photo', message0: 'take a photo → S3', previousStatement: null, nextStatement: null, colour: CLOUD, tooltip: 'Capture the gimbal camera and PUT a PNG to s3://aerotwin-drone-media/photos/.' },
+  { type: 'start_recording', message0: 'start video recording', previousStatement: null, nextStatement: null, colour: CLOUD, tooltip: 'Record the gimbal camera.' },
+  { type: 'save_recording', message0: 'stop recording and upload → S3', previousStatement: null, nextStatement: null, colour: CLOUD, tooltip: 'Stop recording and PUT the video to s3://aerotwin-drone-media/videos/.' },
+  { type: 'upload_flight_log', message0: 'upload flight log so far → S3', previousStatement: null, nextStatement: null, colour: CLOUD, tooltip: 'PUT the telemetry recorded so far to s3://aerotwin-flight-logs/logs/.' },
+  { type: 's3_put_note', message0: 'save note to S3 key %1 text %2', args0: [{ type: 'input_value', name: 'KEY' }, { type: 'input_value', name: 'TEXT' }], inputsInline: true, previousStatement: null, nextStatement: null, colour: CLOUD, tooltip: 'PUT a text object into s3://aerotwin-drone-media. The drone position is appended.' },
   { type: 'log_message', message0: 'show message %1', args0: [{ type: 'input_value', name: 'TEXT' }], previousStatement: null, nextStatement: null, colour: FLOW, tooltip: 'Print a line in the mission console.' },
   { type: 'sensor_keypressed', message0: 'key %1 pressed', args0: [{ type: 'field_dropdown', name: 'KEY', options: [['↑', 'ARROW_UP'], ['↓', 'ARROW_DOWN'], ['←', 'ARROW_LEFT'], ['→', 'ARROW_RIGHT'], ['space', 'SPACE'], ['enter', 'RETURN'], ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('').map(c => [c, c])] }], output: 'Boolean', colour: SENSOR, tooltip: 'True while that key is held down.' },
   { type: 'sensor_gamepad', message0: 'gamepad button %1 pressed', args0: [{ type: 'field_dropdown', name: 'BTN', options: [['A / ✕', '0'], ['B / ◯', '1'], ['X / ▢', '2'], ['Y / △', '3'], ['LB / L1', '4'], ['RB / R1', '5'], ['LT / L2', '6'], ['RT / R2', '7']] }], output: 'Boolean', colour: SENSOR, tooltip: 'True while that controller button is held down.' },
@@ -51,6 +54,7 @@ const gen = {
   take_photo: () => 'await drone.takePhoto();\n',
   start_recording: () => 'await drone.startRecording();\n',
   save_recording: () => 'await drone.saveRecording();\n',
+  upload_flight_log: () => 'await drone.uploadFlightLog();\n',
   end_block: () => 'return;\n',
   start_block: () => ''
 };
@@ -71,6 +75,7 @@ Object.assign(gen, {
   wait: b => `await drone.wait(${v(b, 'DIST')});\n`,
   set_speed: b => `drone.speed = ${v(b, 'SPEED', '3')};\n`,
   smoke: b => `drone.smoke = !!(${v(b, 'SMOKE', 'false')});\n`,
+  s3_put_note: b => `await drone.putNote(${v(b, 'KEY', "'notes/note.txt'")}, ${v(b, 'TEXT', "''")});\n`,
   log_message: b => `__log(${v(b, 'TEXT', "''")});\n`,
   sensor_keypressed: b => [`__key('${b.getFieldValue('KEY')}')`, JS.ORDER_FUNCTION_CALL],
   sensor_gamepad: b => [`__pad(${Number(b.getFieldValue('BTN'))})`, JS.ORDER_FUNCTION_CALL],
@@ -124,8 +129,10 @@ const TOOLBOX = {
       { kind: 'block', type: 'wait', inputs: { DIST: shadowNum(2) } },
       { kind: 'block', type: 'smoke', inputs: { SMOKE: { block: { type: 'logic_boolean', fields: { BOOL: 'TRUE' } } } } }
     ] },
-    { kind: 'category', name: 'Camera', colour: CAMERA, contents: [
-      { kind: 'block', type: 'take_photo' }, { kind: 'block', type: 'start_recording' }, { kind: 'block', type: 'save_recording' }
+    { kind: 'category', name: 'Camera & S3', colour: CLOUD, contents: [
+      { kind: 'block', type: 'take_photo' }, { kind: 'block', type: 'start_recording' }, { kind: 'block', type: 'save_recording' },
+      { kind: 'block', type: 'upload_flight_log' },
+      { kind: 'block', type: 's3_put_note', inputs: { KEY: shadowText('notes/survey.txt'), TEXT: shadowText('Inspection point checked') } }
     ] },
     { kind: 'category', name: 'Sensors', colour: SENSOR, contents: [
       { kind: 'block', type: 'sensor_keypressed' }, { kind: 'block', type: 'sensor_gamepad' },
