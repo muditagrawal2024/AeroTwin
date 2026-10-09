@@ -80,7 +80,7 @@ python -m http.server 8000
 ## 6. Deployment on AWS
 
 The site is hosted on real AWS: the files are in an **Amazon S3** bucket with
-static website hosting, served over HTTPS by **Amazon CloudFront**. See
+static website hosting. See
 [docs/DEPLOY_AWS.md](docs/DEPLOY_AWS.md) for the step-by-step console guide
 and teardown.
 http://aerotwin-site-620503470209.s3-website.ap-south-1.amazonaws.com
